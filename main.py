@@ -23,7 +23,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from anthropic import Anthropic
@@ -169,20 +169,20 @@ class MensajeRequest(BaseModel):
 
 
 # ============================================================================
-# GENERADOR DE STREAMING
+# GENERADOR DE RESPUESTA (sin streaming — más fiable en producción)
 # ============================================================================
 
-def generar_respuesta_streaming(mensaje: str):
+def generar_respuesta(mensaje: str) -> dict:
     """
-    Genera la respuesta del agente como un stream de eventos SSE.
-    Maneja el loop de tools internamente y hace streaming del texto final.
+    Procesa el mensaje del usuario, ejecuta tools si hace falta,
+    y devuelve la respuesta completa + lista de tools usadas.
     """
     global historial
     historial.append({"role": "user", "content": mensaje})
 
-    # Loop de tools (igual que en el 04, pero con streaming al final)
+    tools_usadas = []
+
     while True:
-        # ¿Necesita usar tools? Llamada normal (sin streaming)
         respuesta = cliente.messages.create(
             model="claude-haiku-4-5-20251001",
             max_tokens=1024,
@@ -194,24 +194,17 @@ def generar_respuesta_streaming(mensaje: str):
         historial.append({"role": "assistant", "content": respuesta.content})
 
         if respuesta.stop_reason == "end_turn":
-            # Extrae el texto y lo envía como stream simulado
+            texto = ""
             for bloque in respuesta.content:
                 if hasattr(bloque, "text"):
-                    # Envía el texto en chunks para simular streaming
                     texto = bloque.text
-                    chunk_size = 10
-                    for i in range(0, len(texto), chunk_size):
-                        chunk = texto[i:i+chunk_size]
-                        yield f"data: {json.dumps({'tipo': 'texto', 'contenido': chunk})}\n\n"
-            yield f"data: {json.dumps({'tipo': 'fin'})}\n\n"
-            break
+            return {"texto": texto, "tools": tools_usadas}
 
         if respuesta.stop_reason == "tool_use":
             resultados_tools = []
             for bloque in respuesta.content:
                 if bloque.type == "tool_use":
-                    # Notifica al frontend que está usando una tool
-                    yield f"data: {json.dumps({'tipo': 'tool', 'nombre': bloque.name})}\n\n"
+                    tools_usadas.append(bloque.name)
                     resultado = ejecutar_tool(bloque.name, bloque.input)
                     resultados_tools.append({
                         "type": "tool_result",
@@ -234,15 +227,9 @@ async def frontend():
 
 @app.post("/chat")
 async def chat(req: MensajeRequest):
-    """Recibe un mensaje y devuelve la respuesta en streaming (SSE)."""
-    return StreamingResponse(
-        generar_respuesta_streaming(req.mensaje),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        }
-    )
+    """Recibe un mensaje y devuelve la respuesta completa en JSON."""
+    resultado = generar_respuesta(req.mensaje)
+    return resultado
 
 
 @app.post("/reset")

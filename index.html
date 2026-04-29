@@ -271,33 +271,18 @@
         body: JSON.stringify({ mensaje: texto }),
       });
 
-      const reader = resp.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
+      const data = await resp.json();
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-
-        const lineas = buffer.split("\n\n");
-        buffer = lineas.pop(); // guarda el fragmento incompleto
-
-        for (const linea of lineas) {
-          if (!linea.startsWith("data: ")) continue;
-          const data = JSON.parse(linea.slice(6));
-
-          if (data.tipo === "tool") {
-            agregarToolBadge(data.nombre, idAgente);
-          } else if (data.tipo === "texto") {
-            // Inserta texto antes del cursor
-            burbuja.insertBefore(document.createTextNode(data.contenido), cursor);
-            chat.scrollTop = chat.scrollHeight;
-          } else if (data.tipo === "fin") {
-            cursor.remove();
-          }
-        }
+      // Muestra badges de tools usadas
+      for (const nombre of (data.tools || [])) {
+        agregarToolBadge(nombre, idAgente);
       }
+
+      // Muestra el texto de respuesta
+      cursor.remove();
+      burbuja.textContent = data.texto || "Sin respuesta";
+      chat.scrollTop = chat.scrollHeight;
+
     } catch (err) {
       burbuja.textContent = "Error de conexión. ¿Está corriendo el servidor?";
       cursor.remove();
